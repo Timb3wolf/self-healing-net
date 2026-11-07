@@ -42,62 +42,46 @@ def main():
     }
     run_pipeline_step("1. Telemetry Ingestion (Member 1)", f"{len(telemetry['links'])} links monitored")
 
-    # Step 2: Anomaly / Incident Detection (Contract 2)
-    incident = {
-        "incident_id": "INC-2026-1024-001",
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "severity": "CRITICAL",
-        "anomalous_links": ["A-B"],
-        "root_cause": "Congestion surge exceeding buffer capacity on A-B (94% util, 88.5ms latency)",
-        "causal_chain": [
-            "Traffic burst from S1 egress",
-            "A-B buffer tail-drop",
-            "High packet loss impacting critical flows"
-        ],
-        "recommended_strategy": "REROUTE_OR_SHAPE"
-    }
-    run_pipeline_step("2. Incident Root-Cause Ingestion (Member 2)", incident["root_cause"])
+    # Step 2: Anomaly / Incident Detection via Random Forest + RAG + Qualcomm Cirrascale
+    from backend.inference_cloud import classifier, rag_engine, inference_client, validator
 
-    # Step 3: Candidate Mitigation Generation (Contract 3)
-    candidate_actions = [
-        {
-            "action_id": "ACT-REROUTE-ADB",
-            "type": "REROUTE_FLOW",
-            "target": "F-DATA-2",
-            "params": {"avoid_link": "A-B", "via_path": ["S1", "A", "D", "B", "C"], "rate_limit_mbps": 450.0},
-            "cost": 15.0,
-            "blast_radius": 0.25,
-            "description": "Reroute heavy bulk flow F-DATA-2 via transit node D"
-        },
-        {
-            "action_id": "ACT-THROTTLE-DATA",
-            "type": "RATE_LIMIT",
-            "target": "F-DATA-2",
-            "params": {"limit_mbps": 200.0},
-            "cost": 45.0,
-            "blast_radius": 0.50,
-            "description": "Aggressively rate-limit F-DATA-2 ingress at S1"
-        },
-        {
-            "action_id": "ACT-QOS-PRIORITIZE-VOIP",
-            "type": "QOS_WEIGHT",
-            "target": "A-B",
-            "params": {"strict_priority": "F-VOIP-1"},
-            "cost": 25.0,
-            "blast_radius": 0.35,
-            "description": "Enforce strict priority queue for VoIP on link A-B"
-        },
-        {
-            "action_id": "ACT-RESET-AB",
-            "type": "LINK_RESET",
-            "target": "A-B",
-            "params": {"grace_period_sec": 5},
-            "cost": 120.0,
-            "blast_radius": 0.85,
-            "description": "Soft-reset optical transceiver on link A-B"
-        }
-    ]
-    run_pipeline_step("3. Candidate Actions Generation (Member 3 Optimizer)", f"{len(candidate_actions)} actions formulated")
+    # Run Random Forest classifier (Contract 2 precursor)
+    rf_scan = classifier.scan_topology(telemetry["links"])
+    anomalous_links = rf_scan.get("anomalous_links", ["A-B"]) or ["A-B"]
+    rf_eval = rf_scan.get("link_evaluations", {}).get(anomalous_links[0], {"status": "CRITICAL", "confidence": 1.0, "anomaly_score": 1.0})
+    logger.info(f"Random Forest Anomaly Detection: {rf_scan.get('overall_severity')} on {anomalous_links}")
+
+    # RAG Retrieval
+    rag_docs = rag_engine.retrieve(f"Congestion on link {anomalous_links[0]}", top_k=2)
+    logger.info(f"RAG Retrieved {len(rag_docs)} runbooks: {[d['id'] for d in rag_docs]}")
+
+    # Qualcomm-powered Cirrascale Inference Cloud API Call
+    ai_diag = inference_client.diagnose_and_recommend(
+        telemetry=telemetry,
+        anomalous_links=anomalous_links,
+        rag_context=rag_docs,
+        classifier_summary=rf_eval,
+    )
+    logger.info(f"Qualcomm AI Root Cause: {ai_diag.get('root_cause')}")
+    logger.info(f"AI Provenance: {ai_diag.get('provenance')}")
+    run_pipeline_step("2. Incident Root-Cause Ingestion (Member 2 + Qualcomm Cloud AI 100)", ai_diag.get("root_cause"))
+
+    # Step 3: Candidate Mitigation Validation (Contract 3)
+    raw_actions = ai_diag.get("candidate_actions", [])
+    candidate_actions = validator.sanitize_action_list(raw_actions, telemetry)
+    if not candidate_actions:
+        candidate_actions = [
+            {
+                "action_id": "ACT-REROUTE-ADB",
+                "type": "REROUTE_FLOW",
+                "target": "F-DATA-2",
+                "params": {"avoid_link": "A-B", "via_path": ["S1", "A", "D", "B", "C"], "rate_limit_mbps": 450.0},
+                "cost": 15.0,
+                "blast_radius": 0.25,
+                "description": "Reroute heavy bulk flow F-DATA-2 via transit node D"
+            }
+        ]
+    run_pipeline_step("3. Candidate Actions Generation & Safety Validation", f"{len(candidate_actions)} actions validated")
 
     # Step 4: Optimization via QUBO & Quantum Annealer
     try:

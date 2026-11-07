@@ -22,7 +22,7 @@ def test_full_lifecycle():
     assert tel["links"]["A-B"]["util"] < 0.70
     print(f"  -> Nominal: {len(tel['links'])} links, {len(tel['flows'])} flows active. A-B util = {tel['links']['A-B']['util']}")
 
-    print("\n[STEP 2] Injecting Chaos surge on link A-B...")
+    print("\n[STEP 2] Injecting Chaos surge & running Qualcomm Cirrascale AI Engine...")
     r2 = requests.post(f"{BASE_URL}/api/chaos", json={
         "target_link": "A-B",
         "surge_util": 0.96,
@@ -36,6 +36,13 @@ def test_full_lifecycle():
     assert "A-B" in inc["anomalous_links"]
     print(f"  -> Incident generated: ID={inc['incident_id']} Severity={inc['severity']}")
     print(f"  -> Root Cause: {inc['root_cause']}")
+    print(f"  -> Causal Chain: {inc['causal_chain']}")
+    if inc.get("ml_classifier"):
+        print(f"  -> [Random Forest]: Severity={inc['ml_classifier']['overall_severity']} (Confidence={inc['ml_classifier']['link_eval']['confidence']})")
+    if inc.get("rag_sources"):
+        print(f"  -> [RAG Sources]: {inc['rag_sources']}")
+    if inc.get("provenance"):
+        print(f"  -> [Qualcomm Inference Cloud]: Provider={inc['provenance'].get('provider')}, Model={inc['provenance'].get('model')}, Latency={inc['provenance'].get('latency_ms')}ms")
 
     print("\n[STEP 3] Running QUBO Quantum-Inspired Optimization across all 3 solvers...")
     r3 = requests.post(f"{BASE_URL}/api/optimize", json={
